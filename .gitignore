@@ -12,7 +12,7 @@
 .gradle/
 build/
 **/build/
-/captures
+/captures/
 
 # Kotlin & Tooling Caches
 .kotlin/
@@ -26,12 +26,16 @@ build/
 # Environment files & secrets
 .env
 .env.*
+!.env.example
 *.env
 local.properties
 *.keystore
 *.jks
 *.pepk
-# google-services.json # Uncomment if uploading to a PUBLIC repo to hide Firebase config
+
+# Firebase configuration
+/app/google-services.json
+/app/src/main/res/values/firebase_config.xml
 
 # Firebase CLI & Node dependencies
 .firebase/
