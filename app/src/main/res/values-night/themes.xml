@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Phones in dark mode get a charcoal window; MainActivity takes over the bars once the app's own theme choice loads. -->
+    <style name="Theme.SPOTApp" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/spot_dark_page</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/spot_dark_page</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+</resources>

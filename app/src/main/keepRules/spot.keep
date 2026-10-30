@@ -1,0 +1,18 @@
+# Keep rules for SPOT's release build, which R8 shrinks and optimizes (isMinifyEnabled in build.gradle.kts).
+# Libraries bring their own rules (Supabase rows through kotlinx.serialization, Retrofit, WorkManager, Media3,
+# Firebase, Credential Manager); these cover what they miss.
+
+# Readable crash stack traces: line numbers stay, file names collapse to "SourceFile".
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+# logFailure() names the exception type in logs.
+-keepnames class * extends java.lang.Throwable
+
+# Classes that libraries create by name with newInstance(). Their own rules keep the classes but, in R8's full
+# mode, not the no-argument constructors, so the app crashed at launch without these (WorkDatabase, 2026-10-09).
+# Cloudinary picks its uploader strategies by name; WorkManager 2.7 (through Cloudinary) builds its Room database
+# and input mergers that way; Ktor finds its HTTP engine through ServiceLoader.
+-keep class com.cloudinary.android.*Strategy { <init>(); }
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
+-keep class * extends androidx.work.InputMerger { <init>(); }
+-keep class io.ktor.client.engine.** implements io.ktor.client.HttpClientEngineContainer { <init>(); }

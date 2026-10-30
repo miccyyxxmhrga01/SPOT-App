@@ -1,0 +1,754 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function validAccount(uid) {
+      let data = request.resource.data;
+      return request.auth.token.email_verified == true
+        && data.uid == uid
+        && data.email == request.auth.token.email
+        && data.emailVerified == true
+        && data.profileCompleted is bool
+        && data.get('isPrivate', false) is bool && data.get('privacyUpdating', false) is bool
+        && data.get('pronouns', '') is string && data.get('pronouns', '').size() <= 40
+        && data.get('links', '') is string && data.get('links', '').size() <= 300
+        && data.get('gender', '') is string && data.get('gender', '').size() <= 40
+        && data.keys().hasOnly([
+          'uid', 'email', 'emailVerified', 'fullName', 'displayName', 'username',
+          'course', 'talentCategories', 'bio', 'profileImageUrl', 'accountType',
+          'organization', 'seekingTalents', 'profileCompleted', 'createdAt',
+          'verifiedAt', 'updatedAt', 'pronouns', 'links', 'gender', 'isPrivate', 'privacyUpdating'
+        ]);
+    }
+
+    // Private account records include email addresses. Public discovery needs
+    // separate public profile documents and rules before it is enabled.
+    match /users/{uid} {
+      allow get: if owner(uid);
+      allow create: if owner(uid) && validAccount(uid)
+        && request.resource.data.createdAt == request.time;
+      allow update: if owner(uid) && validAccount(uid)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (!resource.data.get('profileCompleted', false) || request.resource.data.profileCompleted == true)
+        && (!(resource.data.get('accountType', '') in ['student','talent_seeker'])
+          || !resource.data.get('profileCompleted', false)
+          || request.resource.data.get('accountType', '') == resource.data.accountType);
+    }
+
+    function member() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function canReadPost(data) {
+      return member() && (data.audience == 'public' || data.userId == request.auth.uid
+        || (data.audience == 'followers' && exists(/databases/$(database)/documents/users/$(data.userId)/followers/$(request.auth.uid))));
+    }
+    function validMedia(media, urlPattern) {
+      // Shared prefixes keep ten-file albums within Firestore's expression budget.
+      // Required property reads below reject missing or incorrectly typed values.
+      return media.keys().hasOnly(['url', 'contentType', 'storagePath', 'thumbnailUrl'])
+        && media.storagePath is string
+        && media.url.matches(urlPattern)
+        && media.contentType.matches('(image|video)/[a-zA-Z0-9.+-]{1,80}')
+        && (media.thumbnailUrl == '' || media.thumbnailUrl.matches(urlPattern));
+    }
+    function validAlbum(media, uid, id) {
+      let urlPattern = '(https://firebasestorage[.]googleapis[.]com/v0/b/login-a39d3[.]firebasestorage[.]app/o/posts%2F' + uid + '%2F' + id + '%2F'
+        + '|https://res[.]cloudinary[.]com/jcuzzxsz/(image|video)/upload/(so_0,w_960,c_limit,q_auto/)?(v[0-9]+/)?spot/posts/' + uid + '/' + id + '/).{1,1000}';
+      let count = media.size();
+      return media is list && count <= 10
+        && (count < 1 || validMedia(media[0], urlPattern))
+        && (count < 2 || validMedia(media[1], urlPattern))
+        && (count < 3 || validMedia(media[2], urlPattern))
+        && (count < 4 || validMedia(media[3], urlPattern))
+        && (count < 5 || validMedia(media[4], urlPattern))
+        && (count < 6 || validMedia(media[5], urlPattern))
+        && (count < 7 || validMedia(media[6], urlPattern))
+        && (count < 8 || validMedia(media[7], urlPattern))
+        && (count < 9 || validMedia(media[8], urlPattern))
+        && (count < 10 || validMedia(media[9], urlPattern));
+    }
+    function validAuthor(author, uid, audience) {
+      let account = get(/databases/$(database)/documents/users/$(uid)).data;
+      return account.profileCompleted == true
+        && (audience != 'public' || (!account.get('isPrivate', false) && !account.get('privacyUpdating', false)))
+        && author is map
+        && author.keys().hasOnly(['displayName', 'username', 'talent', 'course', 'profileImageUrl'])
+        && author.displayName == account.displayName && author.username == account.username
+        && author.course == account.course && author.profileImageUrl == account.profileImageUrl
+        && author.talent is string && author.talent.size() <= 100;
+    }
+    function validFlatPostFields(data) {
+      let fields = ['username', 'displayName', 'userProfileImageUrl', 'talentCategory', 'mediaUrl', 'mediaType', 'commentsCount'];
+      return !data.keys().hasAny(fields) ||
+        (data.keys().hasAll(fields) && data.username == data.author.username && data.displayName == data.author.displayName
+          && data.userProfileImageUrl == data.author.profileImageUrl
+          && data.talentCategory is string && data.talentCategory.size() <= 60
+          && data.mediaUrl == (data.media.size() > 0 ? data.media[0].url : '')
+          && data.mediaType == (data.media.size() > 0 && data.media[0].contentType.matches('video/.*') ? 'video' : 'image')
+          && data.commentsCount == 0);
+    }
+    function validPost(data, id) {
+      return member() && data.keys().hasAll(['userId', 'author', 'caption', 'categories', 'tags', 'media', 'hasMedia',
+          'audience', 'location', 'taggedPeople', 'likesCount', 'viewsCount', 'popularityScore', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'author', 'caption', 'categories', 'tags', 'media', 'hasMedia',
+          'audience', 'location', 'taggedPeople', 'likesCount', 'viewsCount', 'popularityScore', 'createdAt',
+          'username', 'displayName', 'userProfileImageUrl', 'talentCategory', 'mediaUrl', 'mediaType', 'commentsCount', 'aiCaption', 'aiTagged', 'aiCategorySuggested'])
+        && data.get('aiCaption', false) is bool && data.get('aiTagged', false) is bool && data.get('aiCategorySuggested', false) is bool
+        && validFlatPostFields(data)
+        && (!('commentsCount' in data) || data.commentsCount == 0)
+        && data.userId == request.auth.uid && data.userId.matches('[a-zA-Z0-9_-]{1,128}')
+        && id.matches('[a-zA-Z0-9_-]{1,100}') && validAuthor(data.author, data.userId, data.audience)
+        && data.caption is string && data.caption.size() <= 2000
+        && (data.caption.size() > 0 || data.media.size() > 0)
+        && data.categories is list && data.categories.size() <= 8
+        && data.tags is list && data.tags.size() <= 20
+        && data.taggedPeople is list && data.taggedPeople.size() <= 20
+        && data.location is string && data.location.size() <= 160
+        && data.audience in ['public', 'followers', 'private']
+        && validAlbum(data.media, data.userId, id) && data.hasMedia == (data.media.size() > 0)
+        && data.likesCount == 0 && data.viewsCount == 0 && data.popularityScore == 0
+        && data.createdAt == request.time;
+    }
+    function beforeInteraction(id, uid) {
+      let path = /databases/$(database)/documents/posts/$(id)/interactions/$(uid);
+      return exists(path) ? get(path).data : {'liked': false, 'viewed': false};
+    }
+    function counterUpdate(id, before, after) {
+      let previous = beforeInteraction(id, request.auth.uid);
+      let next = getAfter(/databases/$(database)/documents/posts/$(id)/interactions/$(request.auth.uid)).data;
+      let likeDelta = (next.liked ? 1 : 0) - (previous.liked ? 1 : 0);
+      let viewDelta = (next.viewed ? 1 : 0) - (previous.viewed ? 1 : 0);
+      return after.diff(before).affectedKeys().hasOnly(['likesCount', 'viewsCount', 'popularityScore'])
+        && after.likesCount is int && after.viewsCount is int && after.popularityScore is int
+        && after.likesCount >= 0 && after.viewsCount >= 0
+        && after.likesCount == before.get('likesCount', 0) + likeDelta
+        && after.viewsCount == before.get('viewsCount', 0) + viewDelta
+        && viewDelta >= 0 && (before.userId != request.auth.uid || viewDelta == 0)
+        && after.popularityScore == after.likesCount * 5 + after.viewsCount;
+    }
+    match /posts/{id} {
+      // Authenticated authors must be able to check whether a retry's id already exists.
+      allow get: if member() && (!exists(/databases/$(database)/documents/posts/$(id)) || canReadPost(resource.data));
+      allow list: if canReadPost(resource.data) && request.query.limit != null && request.query.limit <= 30;
+      allow create: if validPost(request.resource.data, id);
+      allow update: if canReadPost(resource.data) && (protectAudience(resource.data, request.resource.data) || counterUpdate(id, resource.data, request.resource.data) || commentCountUpdate(id, resource.data, request.resource.data) || deletedCommentCount(id, resource.data, request.resource.data));
+      match /interactions/{uid} {
+        allow get: if owner(uid) && canReadPost(get(/databases/$(database)/documents/posts/$(id)).data);
+        allow create, update: if owner(uid) && canReadPost(get(/databases/$(database)/documents/posts/$(id)).data)
+          && request.resource.data.keys().hasAll(['liked', 'viewed'])
+          && request.resource.data.keys().hasOnly(['liked', 'viewed'])
+          && request.resource.data.liked is bool && request.resource.data.viewed is bool
+          && (!beforeInteraction(id, uid).viewed || request.resource.data.viewed)
+          && counterUpdate(id, get(/databases/$(database)/documents/posts/$(id)).data,
+            getAfter(/databases/$(database)/documents/posts/$(id)).data);
+      }
+    }
+    // Public identity contains only the fields a member chooses to show on their profile.
+    function validPublicProfile(uid, d) {
+      let a = getAfter(/databases/$(database)/documents/users/$(uid)).data;
+      return a.profileCompleted == true
+        && d.keys().hasAll(['displayName','username','profileImageUrl','nameKey','usernameKey'])
+        && d.keys().hasOnly(['displayName','username','profileImageUrl','nameKey','usernameKey','bio','course','talentCategories',
+          'accountType','organization','seekingTalents','pronouns','links','gender','isPrivate','privacyUpdating'])
+        && d.displayName == a.displayName && d.username == a.username && d.profileImageUrl == a.profileImageUrl
+        && d.nameKey is string && d.nameKey.size() <= 200 && d.usernameKey is string && d.usernameKey.size() <= 200
+        && (!('bio' in d) || d.bio == a.get('bio', '')) && (!('course' in d) || d.course == a.get('course', ''))
+        && (!('talentCategories' in d) || d.talentCategories == a.get('talentCategories', [])) && (!('seekingTalents' in d) || d.seekingTalents == a.get('seekingTalents', []))
+        && (!('organization' in d) || d.organization == a.get('organization', '')) && (!('accountType' in d) || d.accountType == a.get('accountType', ''))
+        && (!('pronouns' in d) || d.pronouns == a.get('pronouns', '')) && (!('links' in d) || d.links == a.get('links', '')) && (!('gender' in d) || d.gender == a.get('gender', ''))
+        && d.get('isPrivate', false) == a.get('isPrivate', false) && d.get('privacyUpdating', false) == a.get('privacyUpdating', false);
+    }
+    match /publicProfiles/{uid} {
+      allow get: if member();
+      allow list: if member() && request.query.limit != null && request.query.limit <= 30;
+      allow create, update: if owner(uid) && member() && validPublicProfile(uid, request.resource.data);
+    }
+    match /usernames/{name} {
+      allow get: if member();
+      allow create: if member() && name.matches('[a-z0-9_]{3,30}')
+        && request.resource.data.keys().hasOnly(['uid']) && request.resource.data.uid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.username == name;
+      allow update: if owner(resource.data.uid) && request.resource.data == resource.data;
+      allow delete: if owner(resource.data.uid)
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.username != name;
+    }
+    function audienceAllowed(audience, uid) {
+      let a = get(/databases/$(database)/documents/users/$(uid)).data;
+      return audience in ['public','followers','private']
+        && (audience != 'public' || (!a.get('isPrivate', false) && !a.get('privacyUpdating', false)));
+    }
+    function protectAudience(before, after) {
+      return owner(before.userId) && after.diff(before).affectedKeys().hasOnly(['audience'])
+        && before.audience == 'public' && after.audience == 'followers';
+    }
+    function chatMember(data) { return member() && request.auth.uid in data.memberIds; }
+    function chatVisible(data) { return member() && (request.auth.uid in data.memberIds || request.auth.uid in data.invitedIds); }
+    function noBlock(a, b) {
+      return !exists(/databases/$(database)/documents/users/$(a)/blockedUsers/$(b))
+        && !exists(/databases/$(database)/documents/users/$(b)/blockedUsers/$(a));
+    }
+    function chatSend(data) {
+      return chatMember(data) && (data.demo || (data.memberIds.size() >= 2 &&
+        (data.kind == 'group' || noBlock(data.partyIds[0], data.partyIds[1]))));
+    }
+    function chatPerson(data, uid) {
+      let p = get(/databases/$(database)/documents/publicProfiles/$(uid)).data;
+      return data.keys().hasOnly(['displayName','username','profileImageUrl'])
+        && data.displayName == p.displayName && data.username == p.username && data.profileImageUrl == p.profileImageUrl;
+    }
+    function chatPeople(data) {
+      let ids = data.partyIds;
+      let p = data.people;
+      return p is map && p.keys().hasOnly(ids) && p.keys().hasAll(ids)
+        && chatPerson(p[ids[0]], ids[0])
+        && (ids.size() < 2 || chatPerson(p[ids[1]], ids[1]))
+        && (ids.size() < 3 || chatPerson(p[ids[2]], ids[2]))
+        && (ids.size() < 4 || chatPerson(p[ids[3]], ids[3]))
+        && (ids.size() < 5 || chatPerson(p[ids[4]], ids[4]))
+        && (ids.size() < 6 || chatPerson(p[ids[5]], ids[5]))
+        && (ids.size() < 7 || chatPerson(p[ids[6]], ids[6]))
+        && (ids.size() < 8 || chatPerson(p[ids[7]], ids[7]));
+    }
+    function newChat(data, id) {
+      return member() && id.matches('[a-zA-Z0-9_-]{1,200}')
+        && data.keys().hasAll(['kind','demo','title','creatorId','partyIds','memberIds','invitedIds','people','inviteNote','preview','lastMessageId','lastSenderId','createdAt','updatedAt'])
+        && data.keys().hasOnly(['kind','demo','title','creatorId','partyIds','memberIds','invitedIds','people','inviteNote','preview','lastMessageId','lastSenderId','createdAt','updatedAt'])
+        && data.creatorId == request.auth.uid && data.kind in ['direct','group'] && data.demo is bool
+        && data.title is string && data.title.size() <= 60 && data.inviteNote is string && data.inviteNote.size() <= 500
+        && data.partyIds is list && data.partyIds.size() <= 8 && data.partyIds.toSet().size() == data.partyIds.size()
+        && data.memberIds == [request.auth.uid] && data.invitedIds is list
+        && data.createdAt == request.time && data.updatedAt == request.time
+        && ((data.demo && data.partyIds == [request.auth.uid] && data.invitedIds == [] && data.people == {}
+              && data.preview is string && data.preview.size() <= 160 && data.lastSenderId == 'demo'
+              && data.lastMessageId == 'sample-1')
+          || (!data.demo && data.partyIds.size() >= 2 && request.auth.uid in data.partyIds
+              && data.invitedIds.toSet() == data.partyIds.toSet().difference([request.auth.uid].toSet())
+              && data.invitedIds.size() == data.partyIds.size() - 1
+              && (data.kind == 'group' || (data.partyIds.size() == 2 && noBlock(data.partyIds[0], data.partyIds[1])))
+              && chatPeople(data) && data.preview == '' && data.lastMessageId == '' && data.lastSenderId == ''));
+    }
+    function membershipChange(before, after) {
+      let uid = request.auth.uid;
+      return !before.demo && after.diff(before).affectedKeys().hasOnly(['memberIds','invitedIds'])
+        && after.memberIds is list && after.invitedIds is list
+        && ((uid in before.invitedIds
+            && after.invitedIds == before.invitedIds.removeAll([uid])
+            && (after.memberIds == before.memberIds || (noBlock(uid, before.creatorId) && after.memberIds == before.memberIds.concat([uid]))))
+          || (uid in before.memberIds && before.kind == 'group'
+            && after.memberIds == before.memberIds.removeAll([uid]) && after.invitedIds == before.invitedIds));
+    }
+    function chatPreview(id, before, after) {
+      let m = getAfter(/databases/$(database)/documents/conversations/$(id)/messages/$(after.lastMessageId)).data;
+      return chatSend(before) && after.diff(before).affectedKeys().hasOnly(['preview','lastMessageId','lastSenderId','updatedAt'])
+        && after.updatedAt == request.time && m.createdAt == request.time && m.senderId == request.auth.uid
+        && after.lastSenderId == request.auth.uid && after.lastMessageId != before.lastMessageId
+        && after.preview is string && after.preview.size() <= 160;
+    }
+    // Unsending the latest message may only swap the inbox preview; order and unread state stay put.
+    function chatUnsendPreview(id, before, after) {
+      let m = getAfter(/databases/$(database)/documents/conversations/$(id)/messages/$(before.lastMessageId)).data;
+      return chatMember(before) && after.diff(before).affectedKeys().hasOnly(['preview'])
+        && before.lastSenderId == request.auth.uid && m.senderId == request.auth.uid
+        && ('unsentAt' in m) && after.preview == 'Message unsent';
+    }
+    function chatAttachment(a, id, messageId) {
+      return a == null || (a is map && a.keys().hasAll(['path','mime','name','size'])
+        && a.keys().hasOnly(['path','mime','name','size','url','key','iv'])
+        && a.path == 'chat_media/' + id + '/' + request.auth.uid + '/' + messageId
+        && a.mime.matches('(image|video)/[a-zA-Z0-9.+-]{1,80}')
+        && a.name is string && a.name.size() <= 120 && a.size is int && a.size > 0 && a.size <= 25 * 1024 * 1024
+        && (a.keys().hasAny(['url','key','iv']) == false
+          || (a.keys().hasAll(['url','key','iv'])
+            && a.url is string && a.url.matches('https://res[.]cloudinary[.]com/jcuzzxsz/raw/upload/v[0-9]+/spot/chat_media/' + id + '/' + request.auth.uid + '/' + messageId + '/[a-zA-Z0-9_.-]+[.]bin')
+            && a.key is string && a.key.matches('[a-zA-Z0-9+/]{43}=')
+            && a.iv is string && a.iv.matches('[a-zA-Z0-9+/]{16}'))));
+    }
+    match /conversations/{id} {
+      allow get: if member() && (!exists(/databases/$(database)/documents/conversations/$(id)) || chatVisible(resource.data));
+      allow list: if chatVisible(resource.data) && request.query.limit != null && request.query.limit <= 100;
+      allow create: if newChat(request.resource.data, id);
+      allow update: if member() && (membershipChange(resource.data, request.resource.data) || chatPreview(id, resource.data, request.resource.data)
+        || chatUnsendPreview(id, resource.data, request.resource.data));
+      match /messages/{messageId} {
+        allow get: if chatMember(get(/databases/$(database)/documents/conversations/$(id)).data);
+        allow list: if chatMember(get(/databases/$(database)/documents/conversations/$(id)).data)
+          && request.query.limit != null && request.query.limit <= 50;
+        allow create: if member() && messageId.matches('[a-zA-Z0-9_-]{1,100}')
+          && request.resource.data.keys().hasAll(['senderId','text','attachment','createdAt'])
+          && request.resource.data.keys().hasOnly(['senderId','text','attachment','createdAt'])
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.text is string && request.resource.data.text.size() <= 4000
+          && (request.resource.data.text.size() > 0 || request.resource.data.attachment != null)
+          && chatAttachment(request.resource.data.attachment, id, messageId)
+          && ((chatSend(getAfter(/databases/$(database)/documents/conversations/$(id)).data)
+              && request.resource.data.senderId == request.auth.uid
+              && getAfter(/databases/$(database)/documents/conversations/$(id)).data.lastMessageId == messageId
+              && getAfter(/databases/$(database)/documents/conversations/$(id)).data.updatedAt == request.time)
+            || (getAfter(/databases/$(database)/documents/conversations/$(id)).data.demo == true
+              && getAfter(/databases/$(database)/documents/conversations/$(id)).data.memberIds == [request.auth.uid]
+              && request.resource.data.senderId == 'demo' && messageId in ['sample-0','sample-1']
+              && request.resource.data.attachment == null));
+        // Unsend: only the sender, once, and it must clear the text and attachment for everyone.
+        allow update: if chatMember(get(/databases/$(database)/documents/conversations/$(id)).data)
+          && resource.data.senderId == request.auth.uid && !('unsentAt' in resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text','attachment','unsentAt'])
+          && request.resource.data.text == '' && request.resource.data.attachment == null
+          && request.resource.data.unsentAt == request.time;
+      }
+    }
+    match /users/{uid}/chatSettings/{id} {
+      allow read: if owner(uid) && member();
+      allow create, update: if owner(uid) && member() && chatMember(get(/databases/$(database)/documents/conversations/$(id)).data)
+        && request.resource.data.keys().hasOnly(['nickname','muted','hiddenAt','readAt'])
+        && (!('nickname' in request.resource.data) || (request.resource.data.nickname is string && request.resource.data.nickname.size() <= 60))
+        && (!('muted' in request.resource.data) || request.resource.data.muted is bool)
+        && (!('hiddenAt' in request.resource.data) || (request.resource.data.hiddenAt is timestamp && request.resource.data.hiddenAt <= request.time))
+        && (!('readAt' in request.resource.data) || (request.resource.data.readAt is timestamp && request.resource.data.readAt <= request.time));
+      // "Delete for you": private markers; other members never see them.
+      match /hiddenMessages/{messageId} {
+        allow read: if owner(uid) && member();
+        allow create, update: if owner(uid) && member() && messageId.matches('[a-zA-Z0-9_-]{1,100}')
+          && request.resource.data.keys().hasOnly(['createdAt']) && request.resource.data.createdAt == request.time;
+      }
+    }
+    match /users/{uid}/blockedUsers/{other} {
+      allow read, delete: if owner(uid) && member();
+      allow create, update: if owner(uid) && member() && uid != other
+        && request.resource.data.keys().hasOnly(['createdAt']) && request.resource.data.createdAt == request.time;
+    }
+    match /conversationReports/{id} {
+      allow create, update: if member() && request.resource.data.reporterId == request.auth.uid
+        && id == request.resource.data.conversationId + '_' + request.auth.uid
+        && chatVisible(get(/databases/$(database)/documents/conversations/$(request.resource.data.conversationId)).data)
+        && request.resource.data.keys().hasOnly(['conversationId','reporterId','reason','createdAt'])
+        && request.resource.data.reason is string && request.resource.data.reason.size() >= 5 && request.resource.data.reason.size() <= 1000
+        && request.resource.data.createdAt == request.time;
+      allow get: if member() && resource.data.reporterId == request.auth.uid;
+    }
+
+    function commentCountUpdate(id, before, after) {
+      let cid = after.lastCommentId;
+      let path = /databases/$(database)/documents/posts/$(id)/comments/$(cid);
+      let c = getAfter(path).data;
+      return after.diff(before).affectedKeys().hasOnly(['commentsCount', 'lastCommentId'])
+        && after.commentsCount is int && after.commentsCount == before.get('commentsCount', 0) + 1
+        && !exists(path) && c.userId == request.auth.uid && c.createdAt == request.time;
+    }
+    function deletedCommentCount(id, before, after) {
+      let cid = after.lastDeletedCommentId;
+      let path = /databases/$(database)/documents/posts/$(id)/comments/$(cid);
+      return after.diff(before).affectedKeys().hasOnly(['commentsCount','lastDeletedCommentId'])
+        && get(path).data.userId == request.auth.uid && !get(path).data.get('deleted', false)
+        && getAfter(path).data.get('deleted', false) == true
+        && after.commentsCount == before.commentsCount - 1 && after.commentsCount >= 0;
+    }
+    function deleteComment(id, cid, before, after) {
+      return owner(before.userId) && !before.get('deleted', false)
+        && after.diff(before).affectedKeys().hasOnly(['deleted','text']) && after.deleted == true && after.text == ''
+        && getAfter(/databases/$(database)/documents/posts/$(id)).data.lastDeletedCommentId == cid
+        && deletedCommentCount(id, get(/databases/$(database)/documents/posts/$(id)).data, getAfter(/databases/$(database)/documents/posts/$(id)).data);
+    }
+    function validComment(id, cid, d) {
+      let parent = get(/databases/$(database)/documents/posts/$(id)).data;
+      let next = getAfter(/databases/$(database)/documents/posts/$(id)).data;
+      let account = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return canReadPost(parent) && account.profileCompleted == true
+        && d.keys().hasAll(['id','postId','userId','username','displayName','profileImageUrl','text','createdAt','likesCount'])
+        && d.keys().hasOnly(['id','postId','userId','username','displayName','profileImageUrl','text','createdAt','likesCount'])
+        && d.id == cid && d.postId == id && d.userId == request.auth.uid
+        && d.username == account.username && d.displayName == account.displayName && d.profileImageUrl == account.profileImageUrl
+        && d.text is string && d.text.size() > 0 && d.text.size() <= 2000
+        && d.createdAt == request.time && d.likesCount == 0
+        && next.lastCommentId == cid && next.commentsCount == parent.get('commentsCount', 0) + 1;
+    }
+    function commentLikeUpdate(id, cid, before, after) {
+      let path = /databases/$(database)/documents/posts/$(id)/comments/$(cid)/likes/$(request.auth.uid);
+      let old = exists(path) && get(path).data.liked;
+      let next = getAfter(path).data.liked;
+      return !before.get('deleted', false) && after.diff(before).affectedKeys().hasOnly(['likesCount']) && after.likesCount is int && after.likesCount >= 0
+        && after.likesCount == before.likesCount + (next ? 1 : 0) - (old ? 1 : 0);
+    }
+    match /posts/{id}/comments/{cid} {
+      allow get: if canReadPost(get(/databases/$(database)/documents/posts/$(id)).data);
+      allow list: if canReadPost(get(/databases/$(database)/documents/posts/$(id)).data)
+        && request.query.limit != null && request.query.limit <= 50;
+      allow create: if member() && cid.matches('[a-zA-Z0-9_-]{1,100}') && validComment(id, cid, request.resource.data);
+      allow update: if canReadPost(get(/databases/$(database)/documents/posts/$(id)).data)
+        && (commentLikeUpdate(id, cid, resource.data, request.resource.data) || deleteComment(id, cid, resource.data, request.resource.data));
+      match /likes/{uid} {
+        allow get: if owner(uid) && canReadPost(get(/databases/$(database)/documents/posts/$(id)).data);
+        allow create, update: if owner(uid) && canReadPost(get(/databases/$(database)/documents/posts/$(id)).data)
+          && request.resource.data.keys().hasOnly(['liked']) && request.resource.data.liked is bool
+          && commentLikeUpdate(id, cid, get(/databases/$(database)/documents/posts/$(id)/comments/$(cid)).data,
+            getAfter(/databases/$(database)/documents/posts/$(id)/comments/$(cid)).data);
+      }
+    }
+    function followPair(target, me) {
+      let a = getAfter(/databases/$(database)/documents/users/$(target)/followers/$(me)).data;
+      let b = getAfter(/databases/$(database)/documents/users/$(me)/following/$(target)).data;
+      return a.keys().hasOnly(['uid','createdAt']) && b.keys().hasOnly(['uid','createdAt'])
+        && a.uid == me && b.uid == target && a.createdAt == request.time && b.createdAt == request.time;
+    }
+    function privateProfile(target) {
+      return get(/databases/$(database)/documents/publicProfiles/$(target)).data.get('isPrivate', false)
+        || get(/databases/$(database)/documents/publicProfiles/$(target)).data.get('privacyUpdating', false);
+    }
+    function canCreateFollow(target, me) {
+      return member() && target != me && followPair(target, me)
+        && ((owner(me) && !privateProfile(target))
+          || (owner(target) && exists(/databases/$(database)/documents/users/$(target)/followRequests/$(me))
+            && !existsAfter(/databases/$(database)/documents/users/$(target)/followRequests/$(me))));
+    }
+    match /users/{target}/followers/{me} {
+      allow read: if member();
+      allow create: if canCreateFollow(target, me);
+      allow delete: if (owner(me) || owner(target)) && member()
+        && !existsAfter(/databases/$(database)/documents/users/$(me)/following/$(target));
+    }
+    match /users/{me}/following/{target} {
+      allow read: if member();
+      allow create: if canCreateFollow(target, me);
+      allow delete: if (owner(me) || owner(target)) && member()
+        && !existsAfter(/databases/$(database)/documents/users/$(target)/followers/$(me));
+    }
+    match /users/{target}/followRequests/{me} {
+      allow get: if member() && (owner(target) || owner(me));
+      allow list: if owner(target) && request.query.limit != null && request.query.limit <= 50;
+      allow create, update: if owner(me) && member() && target != me && privateProfile(target)
+        && !exists(/databases/$(database)/documents/users/$(target)/followers/$(me))
+        && request.resource.data.keys().hasOnly(['uid','createdAt']) && request.resource.data.uid == me
+        && request.resource.data.createdAt == request.time;
+      allow delete: if member() && (owner(target) || owner(me));
+    }
+    function notificationEvent(target, id, d) {
+      let me = request.auth.uid;
+      return (d.type == 'like' && id == 'like_' + d.postId + '_' + me && d.commentId == ''
+          && d.message == 'liked your post'
+          && get(/databases/$(database)/documents/posts/$(d.postId)).data.userId == target
+          && canReadPost(get(/databases/$(database)/documents/posts/$(d.postId)).data)
+          && !beforeInteraction(d.postId, me).liked
+          && getAfter(/databases/$(database)/documents/posts/$(d.postId)/interactions/$(me)).data.liked)
+        || (d.type == 'comment' && id == 'comment_' + d.commentId && d.message == 'commented on your post'
+          && get(/databases/$(database)/documents/posts/$(d.postId)).data.userId == target
+          && !exists(/databases/$(database)/documents/posts/$(d.postId)/comments/$(d.commentId))
+          && getAfter(/databases/$(database)/documents/posts/$(d.postId)/comments/$(d.commentId)).data.userId == me
+          && getAfter(/databases/$(database)/documents/posts/$(d.postId)/comments/$(d.commentId)).data.createdAt == request.time)
+        || (d.type == 'follow' && id == 'follow_' + me && d.postId == '' && d.commentId == ''
+          && d.message == 'started following you'
+          && !exists(/databases/$(database)/documents/users/$(target)/followers/$(me))
+          && getAfter(/databases/$(database)/documents/users/$(target)/followers/$(me)).data.createdAt == request.time);
+    }
+    match /users/{target}/notifications/{id} {
+      // Senders can check their exact event for idempotent retries, never list another inbox.
+      allow get: if member() && (owner(target)
+        || !exists(/databases/$(database)/documents/users/$(target)/notifications/$(id))
+        || resource.data.senderId == request.auth.uid);
+      allow list: if owner(target) && member() && request.query.limit != null && request.query.limit <= 100;
+      allow create: if member() && target != request.auth.uid
+        && request.resource.data.keys().hasAll(['type','senderId','senderName','senderProfileImageUrl','postId','commentId','message','createdAt','isRead'])
+        && request.resource.data.keys().hasOnly(['type','senderId','senderName','senderProfileImageUrl','postId','commentId','message','createdAt','isRead'])
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.senderName == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName
+        && request.resource.data.senderProfileImageUrl == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileImageUrl
+        && request.resource.data.createdAt == request.time && request.resource.data.isRead == false
+        && notificationEvent(target, id, request.resource.data);
+      allow update: if owner(target) && member() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead'])
+        && request.resource.data.isRead is bool;
+    }
+    match /users/{uid}/savedPosts/{id} {
+      allow read, delete: if owner(uid) && member();
+      allow create, update: if owner(uid) && canReadPost(get(/databases/$(database)/documents/posts/$(id)).data)
+        && request.resource.data.keys().hasOnly(['postId','createdAt']) && request.resource.data.postId == id
+        && request.resource.data.createdAt == request.time;
+    }
+
+    // Discover directories are visible to signed-in SPOT users; private membership lists are not.
+    function signedIn() { return request.auth != null; }
+    function communityAccount() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function communityReady() { return signedIn() && communityAccount().profileCompleted == true; }
+    function textWithin(value, min, max) { return value is string && value.size() >= min && value.size() <= max; }
+    function communityImage(url, collection, uid, id) {
+      return url == '' || (url is string && url.matches('https://res[.]cloudinary[.]com/jcuzzxsz/image/upload/(v[0-9]+/)?spot/' + collection + '/' + uid + '/' + id + '/.{1,1000}'));
+    }
+    function personRecord(d, uid) {
+      return d.keys().hasAll(['userId','displayName','profileImageUrl','role','createdAt'])
+        && d.keys().hasOnly(['userId','displayName','profileImageUrl','role','createdAt'])
+        && d.userId == uid && d.createdAt == request.time && d.role in ['owner','member']
+        && textWithin(d.displayName, 1, 80) && textWithin(d.profileImageUrl, 0, 2000);
+    }
+    function selfPerson(d, uid) {
+      return owner(uid) && personRecord(d, uid) && communityReady()
+        && d.displayName == communityAccount().displayName && d.profileImageUrl == communityAccount().profileImageUrl;
+    }
+    function groupPath(id) { return /databases/$(database)/documents/groups/$(id); }
+    function groupMemberPath(id, uid) { return /databases/$(database)/documents/groups/$(id)/members/$(uid); }
+    function requestPath(id, uid) { return /databases/$(database)/documents/groups/$(id)/requests/$(uid); }
+    function groupOwner(id) { return signedIn() && get(groupPath(id)).data.ownerId == request.auth.uid; }
+    function groupListVisible(id) {
+      return signedIn() && (get(groupPath(id)).data.privacy == 'public' || exists(groupMemberPath(id, request.auth.uid)));
+    }
+    function groupCountChange(id, b, a) {
+      let uid = a.lastMemberId;
+      let beforeMember = exists(groupMemberPath(id, uid));
+      let afterMember = existsAfter(groupMemberPath(id, uid));
+      return textWithin(uid, 1, 128) && beforeMember != afterMember && uid != b.ownerId
+        && (owner(uid) || (groupOwner(id) && !beforeMember && exists(requestPath(id, uid))))
+        && a.diff(b).affectedKeys().hasOnly(['memberCount','lastMemberId'])
+        && a.memberCount is int && a.memberCount >= 1
+        && a.memberCount == b.memberCount + (afterMember ? 1 : -1);
+    }
+    function newGroupMember(id, uid, d) {
+      let g = getAfter(groupPath(id)).data;
+      return personRecord(d, uid) &&
+        ((!exists(groupPath(id)) && owner(uid) && g.ownerId == uid && d.role == 'owner' && selfPerson(d, uid))
+        || (exists(groupPath(id)) && d.role == 'member' && uid != g.ownerId && g.lastMemberId == uid
+          && groupCountChange(id, get(groupPath(id)).data, g)
+          && ((g.privacy == 'public' && selfPerson(d, uid))
+            || (groupOwner(id) && exists(requestPath(id, uid)) && !existsAfter(requestPath(id, uid))
+              && d.displayName == get(requestPath(id, uid)).data.displayName
+              && d.profileImageUrl == get(requestPath(id, uid)).data.profileImageUrl))));
+    }
+    match /groups/{id} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit != null && request.query.limit <= 30;
+      allow create: if communityReady() && id.matches('[a-zA-Z0-9_-]{1,100}')
+        && request.resource.data.keys().hasAll(['groupId','name','nameKey','description','imageUrl','category','privacy','ownerId','ownerName','ownerProfileImageUrl','memberCount','createdAt'])
+        && request.resource.data.keys().hasOnly(['groupId','name','nameKey','description','imageUrl','category','privacy','ownerId','ownerName','ownerProfileImageUrl','memberCount','createdAt'])
+        && request.resource.data.groupId == id && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerName == communityAccount().displayName && request.resource.data.ownerProfileImageUrl == communityAccount().profileImageUrl
+        && textWithin(request.resource.data.name, 2, 80) && request.resource.data.nameKey == request.resource.data.name.lower()
+        && textWithin(request.resource.data.description, 1, 2000) && textWithin(request.resource.data.category, 1, 60)
+        && request.resource.data.privacy in ['public','private'] && request.resource.data.memberCount == 1
+        && request.resource.data.createdAt == request.time
+        && communityImage(request.resource.data.imageUrl, 'groups', request.auth.uid, id)
+        && existsAfter(groupMemberPath(id, request.auth.uid))
+        && getAfter(groupMemberPath(id, request.auth.uid)).data.role == 'owner';
+      allow update: if signedIn() && groupCountChange(id, resource.data, request.resource.data);
+      match /members/{uid} {
+        allow get: if signedIn() && (owner(uid) || groupListVisible(id));
+        allow list: if groupListVisible(id) && request.query.limit != null && request.query.limit <= 50;
+        allow create: if signedIn() && newGroupMember(id, uid, request.resource.data);
+        allow delete: if owner(uid) && get(groupPath(id)).data.ownerId != uid && getAfter(groupPath(id)).data.lastMemberId == uid
+          && groupCountChange(id, get(groupPath(id)).data, getAfter(groupPath(id)).data);
+      }
+      match /requests/{uid} {
+        allow get: if signedIn() && (owner(uid) || groupOwner(id));
+        allow list: if groupOwner(id) && request.query.limit != null && request.query.limit <= 50;
+        allow create: if selfPerson(request.resource.data, uid) && request.resource.data.role == 'member'
+          && get(groupPath(id)).data.privacy == 'private' && !exists(groupMemberPath(id, uid));
+        allow delete: if signedIn() && (owner(uid) || groupOwner(id));
+      }
+    }
+    function eventPath(id) { return /databases/$(database)/documents/events/$(id); }
+    function participantPath(id, uid) { return /databases/$(database)/documents/events/$(id)/participants/$(uid); }
+    function eventCountChange(id, b, a) {
+      let uid = request.auth.uid;
+      let beforeMember = exists(participantPath(id, uid));
+      let afterMember = existsAfter(participantPath(id, uid));
+      return beforeMember != afterMember && a.lastParticipantId == uid
+        && a.diff(b).affectedKeys().hasOnly(['participantCount','lastParticipantId'])
+        && a.participantCount is int && a.participantCount >= 0
+        && a.participantCount == b.participantCount + (afterMember ? 1 : -1)
+        && (!afterMember || (b.startsAt > request.time && (b.participantLimit == null || a.participantCount <= b.participantLimit)));
+    }
+    match /events/{id} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit != null && request.query.limit <= 30;
+      allow create: if communityReady() && communityAccount().accountType == 'talent_seeker'
+        && id.matches('[a-zA-Z0-9_-]{1,100}')
+        && request.resource.data.keys().hasAll(['eventId','title','nameKey','description','imageUrl','category','startsAt','location','organizer','organizerId','organizerName','organizerProfileImageUrl','participantLimit','participantCount','createdAt'])
+        && request.resource.data.keys().hasOnly(['eventId','title','nameKey','description','imageUrl','category','startsAt','location','organizer','organizerId','organizerName','organizerProfileImageUrl','participantLimit','participantCount','createdAt'])
+        && request.resource.data.eventId == id && request.resource.data.organizerId == request.auth.uid
+        && request.resource.data.organizerName == communityAccount().displayName && request.resource.data.organizerProfileImageUrl == communityAccount().profileImageUrl
+        && textWithin(request.resource.data.title, 2, 100) && request.resource.data.nameKey == request.resource.data.title.lower()
+        && textWithin(request.resource.data.description, 1, 3000) && textWithin(request.resource.data.category, 1, 60)
+        && textWithin(request.resource.data.location, 1, 160) && textWithin(request.resource.data.organizer, 1, 100)
+        && request.resource.data.startsAt is timestamp && request.resource.data.startsAt > request.time
+        && (request.resource.data.participantLimit == null || (request.resource.data.participantLimit is int && request.resource.data.participantLimit > 0 && request.resource.data.participantLimit <= 100000))
+        && request.resource.data.participantCount == 0 && request.resource.data.createdAt == request.time
+        && communityImage(request.resource.data.imageUrl, 'events', request.auth.uid, id);
+      allow update: if signedIn() && eventCountChange(id, resource.data, request.resource.data);
+      match /participants/{uid} {
+        allow get: if signedIn() && (owner(uid) || get(eventPath(id)).data.organizerId == request.auth.uid || exists(participantPath(id, request.auth.uid)));
+        allow list: if signedIn() && (get(eventPath(id)).data.organizerId == request.auth.uid || exists(participantPath(id, request.auth.uid)))
+          && request.query.limit != null && request.query.limit <= 50;
+        allow create: if selfPerson(request.resource.data, uid) && request.resource.data.role == 'member'
+          && eventCountChange(id, get(eventPath(id)).data, getAfter(eventPath(id)).data);
+        allow delete: if owner(uid) && eventCountChange(id, get(eventPath(id)).data, getAfter(eventPath(id)).data);
+      }
+    }
+
+    match /users/{uid}/settings/{id} {
+      allow get: if owner(uid) && member() && id == 'experience';
+      allow create, update: if owner(uid) && member() && id == 'experience'
+        && request.resource.data.keys().hasOnly(['storyAudience','postAudience','likes','comments','follows'])
+        && request.resource.data.storyAudience in ['public','followers','private']
+        && request.resource.data.postAudience in ['public','followers','private']
+        && request.resource.data.likes is bool && request.resource.data.comments is bool && request.resource.data.follows is bool;
+    }
+    function storyReaction(id, uid) {
+      let path = /databases/$(database)/documents/stories/$(id)/reactions/$(uid);
+      return exists(path) ? get(path).data.liked : false;
+    }
+    function storyReactionAllowed(d) {
+      return canReadPost(d) && d.userId != request.auth.uid && !d.deleted
+        && d.createdAt + duration.value(24, 'h') > request.time && noBlock(d.userId, request.auth.uid);
+    }
+    function storyCounter(id, before, after) {
+      let next = getAfter(/databases/$(database)/documents/stories/$(id)/reactions/$(request.auth.uid)).data.liked;
+      return storyReactionAllowed(before) && after.diff(before).affectedKeys().hasOnly(['likesCount'])
+        && next is bool && after.likesCount is int && after.likesCount >= 0
+        && after.likesCount == before.get('likesCount', 0) + (next ? 1 : 0) - (storyReaction(id, request.auth.uid) ? 1 : 0);
+    }
+    function storyOverlay(a) {
+      let x = a.x; let y = a.y; let size = a.size; let color = a.color; let text = a.text;
+      return a.keys().hasOnly(['id','text','x','y','size','color','background'])
+        && a.id.matches('[a-zA-Z0-9_-]{1,80}') && text is string && text.size() > 0 && text.size() <= 160
+        && x >= 0 && x <= 1 && y >= 0 && y <= 1 && size >= 0.025 && size <= 0.15
+        && color is int && color >= 0 && color <= 4294967295 && a.background is bool;
+    }
+    function storyOverlays(a) {
+      let n = a.size();
+      return a is list && n <= 4 && (n < 1 || storyOverlay(a[0])) && (n < 2 || storyOverlay(a[1]))
+        && (n < 3 || storyOverlay(a[2])) && (n < 4 || storyOverlay(a[3]));
+    }
+    function storyComposition(c) {
+      return c is map && c.keys().hasOnly(['scale','offsetX','offsetY','fill','rotation','trimStartMs','trimEndMs','muted','imageDurationMs','overlays'])
+        && c.scale is number && c.scale >= 1 && c.scale <= 4
+        && c.offsetX is number && c.offsetX >= -1 && c.offsetX <= 1
+        && c.offsetY is number && c.offsetY >= -1 && c.offsetY <= 1
+        && c.fill is bool && c.rotation is int && c.rotation >= 0 && c.rotation <= 3
+        && c.trimStartMs is int && c.trimStartMs >= 0 && c.trimStartMs <= 300000
+        && c.trimEndMs is int && (c.trimEndMs == 0 || (c.trimEndMs > c.trimStartMs && c.trimEndMs <= c.trimStartMs + 60000))
+        && c.muted is bool && c.imageDurationMs is int && c.imageDurationMs >= 1000 && c.imageDurationMs <= 60000
+        && storyOverlays(c.overlays);
+    }
+    match /stories/{id} {
+      allow get: if member() && (!exists(/databases/$(database)/documents/stories/$(id)) || canReadPost(resource.data));
+      allow list: if canReadPost(resource.data) && request.query.limit != null && request.query.limit <= 100;
+      allow create: if member() && owner(request.resource.data.userId)
+        && request.resource.data.keys().hasAll(['userId','mediaUrl','mediaType','createdAt','audience','deleted','username','profileImageUrl'])
+        && request.resource.data.keys().hasOnly(['userId','mediaUrl','mediaType','createdAt','audience','deleted','username','profileImageUrl','composition','likesCount'])
+        && request.resource.data.mediaUrl.matches('https://res[.]cloudinary[.]com/jcuzzxsz/(image|video)/upload/(v[0-9]+/)?spot/stories/' + request.auth.uid + '/' + id + '/.{1,1000}')
+        && request.resource.data.mediaType in ['image','video'] && request.resource.data.createdAt == request.time
+        && request.resource.data.deleted == false && audienceAllowed(request.resource.data.audience, request.auth.uid)
+        && request.resource.data.get('likesCount',0) == 0
+        && (!('composition' in request.resource.data) || storyComposition(request.resource.data.composition))
+        && request.resource.data.username == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username
+        && request.resource.data.profileImageUrl == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileImageUrl;
+      allow update: if member() && ((owner(resource.data.userId)
+        && (protectAudience(resource.data, request.resource.data)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted']) && request.resource.data.deleted == true)))
+        || storyCounter(id, resource.data, request.resource.data));
+      match /reactions/{uid} {
+        allow get: if owner(uid) && canReadPost(get(/databases/$(database)/documents/stories/$(id)).data);
+        allow create, update: if owner(uid) && request.resource.data.keys().hasOnly(['liked']) && request.resource.data.liked is bool
+          && storyCounter(id, get(/databases/$(database)/documents/stories/$(id)).data, getAfter(/databases/$(database)/documents/stories/$(id)).data);
+      }
+    }
+    function highlightPostItem(m, source) {
+      // Invalid indexes fail closed on the indexed read; cache it once per item.
+      let item = source.media[m.index];
+      return m.url == item.url && m.type == (item.contentType.matches('video/.*') ? 'video' : 'image');
+    }
+    function highlightItem(m, uid) {
+      let story = m.source == 'story';
+      let source = story ? get(/databases/$(database)/documents/stories/$(m.sourceId)).data : get(/databases/$(database)/documents/posts/$(m.sourceId)).data;
+      return source.userId == uid && (story
+        ? (m.keys().hasOnly(['source','sourceId','index','url','type','composition']) && m.index == 0
+          && m.url == source.mediaUrl && m.type == source.mediaType && m.get('composition', {}) == source.get('composition', {}))
+        : (m.source == 'post' && m.keys().hasOnly(['source','sourceId','index','url','type'])
+          && (!('media' in source) ? (m.index == 0 && m.url == source.mediaUrl && m.type == source.mediaType) : highlightPostItem(m, source))));
+    }
+    function highlightMedia(items, uid) {
+      let count = items.size();
+      return items is list && count > 0 && count <= 8
+        && highlightItem(items[0], uid)
+        && (count < 2 || highlightItem(items[1], uid)) && (count < 3 || highlightItem(items[2], uid))
+        && (count < 4 || highlightItem(items[3], uid)) && (count < 5 || highlightItem(items[4], uid))
+        && (count < 6 || highlightItem(items[5], uid)) && (count < 7 || highlightItem(items[6], uid))
+        && (count < 8 || highlightItem(items[7], uid));
+    }
+    function canReadHighlight(uid, data) {
+      return member() && (owner(uid) || data.audience == 'public'
+        || (data.audience == 'followers' && exists(/databases/$(database)/documents/users/$(uid)/followers/$(request.auth.uid))));
+    }
+    match /users/{uid}/highlights/{id} {
+      allow get: if canReadHighlight(uid, resource.data);
+      allow list: if canReadHighlight(uid, resource.data) && request.query.limit != null && request.query.limit <= 100;
+      allow create, update: if owner(uid) && member()
+        && ((request.resource.data.userId == uid && request.resource.data.keys().hasOnly(['userId','title','media','cover','audience','updatedAt'])
+            && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 32
+            && request.resource.data.cover is int && request.resource.data.cover >= 0 && request.resource.data.cover < request.resource.data.media.size()
+            && audienceAllowed(request.resource.data.audience, uid) && request.resource.data.updatedAt == request.time
+            && highlightMedia(request.resource.data.media, uid)) || protectAudience(resource.data, request.resource.data));
+      allow delete: if owner(uid) && member();
+    }
+    // Opportunities and event hiring use verified, completed account roles.
+    function workReady() { return member() && communityReady(); }
+    function seeker() { return workReady() && communityAccount().accountType == 'talent_seeker'; }
+    function creator() { return workReady() && communityAccount().accountType == 'student'; }
+    function opportunityPath(id) { return /databases/$(database)/documents/opportunities/$(id); }
+    function openOpportunity(d) { return d.status == 'open' && d.deadline > request.time; }
+    match /opportunities/{id} {
+      allow get: if member();
+      allow list: if member() && request.query.limit != null && request.query.limit <= 30;
+      allow create: if seeker()
+        && request.resource.data.keys().hasAll(['seekerId','title','kind','description','category','location','deadline','status','createdAt'])
+        && request.resource.data.keys().hasOnly(['seekerId','title','kind','description','category','location','deadline','status','createdAt'])
+        && request.resource.data.seekerId == request.auth.uid
+        && textWithin(request.resource.data.title, 2, 100)
+        && request.resource.data.kind in ['job','audition']
+        && textWithin(request.resource.data.description, 10, 3000)
+        && textWithin(request.resource.data.category, 1, 60)
+        && textWithin(request.resource.data.location, 1, 160)
+        && request.resource.data.deadline is timestamp && request.resource.data.deadline > request.time
+        && request.resource.data.status == 'open' && request.resource.data.createdAt == request.time;
+      allow update: if seeker() && resource.data.seekerId == request.auth.uid
+        && resource.data.status == 'open' && request.resource.data.status == 'closed'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+    }
+    function validWorkSource(d) {
+      return (d.kind == 'invitation' && get(eventPath(d.sourceId)).data.organizerId == d.seekerId
+          && get(eventPath(d.sourceId)).data.title == d.title && get(eventPath(d.sourceId)).data.startsAt > request.time)
+        || (d.kind == 'application' && get(opportunityPath(d.sourceId)).data.seekerId == d.seekerId
+          && get(opportunityPath(d.sourceId)).data.title == d.title && openOpportunity(get(opportunityPath(d.sourceId)).data));
+    }
+    function requestParty(d) { return member() && (d.seekerId == request.auth.uid || d.creatorId == request.auth.uid); }
+    function newTalentRequest(id, d) {
+      return workReady()
+        && d.keys().hasAll(['kind','sourceId','seekerId','creatorId','title','details','status','createdAt','updatedAt'])
+        && d.keys().hasOnly(['kind','sourceId','seekerId','creatorId','title','details','status','createdAt','updatedAt'])
+        && d.kind in ['invitation','application']
+        && textWithin(d.sourceId,1,128) && textWithin(d.creatorId,1,128) && textWithin(d.seekerId,1,128)
+        && id == d.kind + '_' + d.sourceId + '_' + d.creatorId
+        && d.creatorId != d.seekerId && noBlock(d.creatorId,d.seekerId)
+        && ((d.kind == 'invitation' && seeker() && d.seekerId == request.auth.uid
+          && get(/databases/$(database)/documents/users/$(d.creatorId)).data.accountType == 'student'
+          && get(/databases/$(database)/documents/users/$(d.creatorId)).data.profileCompleted == true)
+          || (d.kind == 'application' && creator() && d.creatorId == request.auth.uid))
+        && textWithin(d.title,2,100) && textWithin(d.details,10,2000) && validWorkSource(d)
+        && d.status == 'pending' && d.createdAt == request.time && d.updatedAt == request.time;
+    }
+    function talentTransition(b, a) {
+      let sender = b.kind == 'invitation' ? b.seekerId : b.creatorId;
+      let recipient = b.kind == 'invitation' ? b.creatorId : b.seekerId;
+      return b.status == 'pending' && a.diff(b).affectedKeys().hasOnly(['status','updatedAt'])
+        && a.updatedAt == request.time
+        && ((request.auth.uid == sender && a.status == 'withdrawn')
+          || (request.auth.uid == recipient && a.status in ['accepted','declined']
+            && noBlock(b.creatorId,b.seekerId) && (a.status != 'accepted' || validWorkSource(b))));
+    }
+    match /talentRequests/{id} {
+      // Exact missing-document checks support idempotent forms and a creator's application status.
+      allow get: if member() && (!exists(/databases/$(database)/documents/talentRequests/$(id)) || requestParty(resource.data));
+      allow list: if requestParty(resource.data) && request.query.limit != null && request.query.limit <= 30;
+      allow create: if newTalentRequest(id, request.resource.data);
+      allow update: if requestParty(resource.data) && talentTransition(resource.data, request.resource.data);
+    }
+
+  }
+}

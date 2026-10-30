@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.example.spotapp",
+      "sha256_cert_fingerprints": [
+        "00:86:86:5C:E9:BC:0D:4E:99:3B:37:27:BB:52:8E:D6:4E:06:59:39:2A:C5:24:84:ED:CC:83:3B:F7:55:2F:9F"
+      ]
+    }
+  }
+]

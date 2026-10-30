@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPOT</title>
+  <meta name="description" content="Campus talent and connections at Bohol Island State University.">
+  <meta property="og:title" content="Open this on SPOT">
+  <meta property="og:description" content="Campus talent and connections at Bohol Island State University.">
+  <meta property="og:image" content="https://spot-bisu.web.app/spotlogo.png">
+  <meta name="theme-color" content="#FFFCF6">
+  <link rel="icon" href="/spotlogo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    /* SPOT's palette (ui/theme/components/SpotDesignKit.kt). */
+    :root {
+      --ivory: #FFFCF6; --surface: #FFFFFF; --ink: #26251F; --muted: #74746C; --line: #E9E4D9;
+      --gold: #D4AF37; --gold-bright: #FDD87A; --gold-ink: #785B13; --gold-soft: #FFF1CB; --on-gold: #26251F;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ivory: #1B1A17; --surface: #232220; --ink: #F2EFE6; --muted: #A8A69B; --line: #3A3830;
+        --gold-ink: #E6C766; --gold-soft: #3A3118;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+      background: radial-gradient(circle at 20% 0%, var(--gold-soft), transparent 55%), var(--ivory);
+      color: var(--ink); font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main {
+      width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--line);
+      border-radius: 28px; padding: 32px 24px 28px; text-align: center; box-shadow: 0 12px 40px rgba(38, 37, 31, .08);
+    }
+    .logo {
+      width: 96px; height: 96px; border-radius: 50%; margin: 0 auto 18px; padding: 4px;
+      background: linear-gradient(135deg, var(--gold-bright), var(--gold));
+    }
+    .logo img { width: 100%; height: 100%; border-radius: 50%; background: #fff; object-fit: contain; display: block; }
+    .kind {
+      display: inline-block; margin: 0 0 10px; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600;
+      color: var(--gold-ink); background: var(--gold-soft);
+    }
+    h1 { font-size: 26px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 8px; }
+    p { color: var(--muted); font-size: 15px; line-height: 1.5; margin: 0 0 22px; }
+    .button {
+      display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 52px;
+      border-radius: 999px; font-size: 16px; font-weight: 700; text-decoration: none; margin-top: 10px;
+    }
+    .primary { color: var(--on-gold); background: linear-gradient(135deg, var(--gold-bright), var(--gold)); border: 1px solid rgba(255,255,255,.55); }
+    .secondary { color: var(--ink); background: var(--surface); border: 1px solid var(--line); }
+    .note { font-size: 13px; margin: 12px 0 0; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="logo"><img src="/spotlogo.png" alt="SPOT logo"></div>
+    <span class="kind" id="kind" hidden></span>
+    <h1 id="title">SPOT</h1>
+    <p id="message">Campus talent and connections at Bohol Island State University.</p>
+    <a class="button primary" id="open" hidden>Open in SPOT</a>
+    <a class="button secondary" id="download" href="#" hidden>Download SPOT for Android</a>
+    <p class="note" id="download-note" hidden></p>
+  </main>
+  <script>
+    // Share links look like /p/<post>, /e/<event> or /u/<member>; the app reads the same paths (data/SpotLinks.kt).
+    // Android opens SPOT straight from the link when it's installed. In-app browsers (Messenger, Facebook) open this
+    // page instead, so the button hands the same link to SPOT through an intent:// address.
+    const kinds = { p: ["Post", "A post on SPOT"], e: ["Event", "An event on SPOT"], u: ["Profile", "A profile on SPOT"] };
+    const match = location.pathname.match(/^\/([peu])\/([A-Za-z0-9_-]{1,128})\/?$/);
+    const android = /Android/i.test(navigator.userAgent);
+    if (match) {
+      const [label, title] = kinds[match[1]];
+      document.title = title;
+      document.getElementById("kind").textContent = label;
+      document.getElementById("kind").hidden = false;
+      document.getElementById("title").textContent = title;
+      document.getElementById("message").textContent = android
+        ? "Open it in the SPOT app. If you don't have SPOT yet, download it below, then tap the link again."
+        : "Open this link on an Android phone with SPOT installed.";
+      if (android) {
+        const open = document.getElementById("open");
+        open.href = "intent://" + location.host + location.pathname + "#Intent;scheme=https;package=com.example.spotapp;end";
+        open.hidden = false;
+      }
+    }
+    // The download shows once download/latest.json names a version. Its "url" points at the APK, which lives off this
+    // site: Firebase Hosting's free plan doesn't serve .apk files.
+    fetch("/download/latest.json", { cache: "no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(latest => {
+        if (!latest || !latest.version || !/^https:\/\//.test(latest.url || "")) return;
+        document.getElementById("download").href = latest.url;
+        document.getElementById("download").hidden = false;
+        document.getElementById("download").textContent = "Download SPOT " + latest.version + " for Android";
+        const note = document.getElementById("download-note");
+        // The APK is on Google Drive, which warns that it can't scan app files before it downloads.
+        note.textContent = "Android 7.0 or newer" + (latest.sizeMb ? " · " + latest.sizeMb + " MB" : "") +
+          ". Google Drive will say it can't scan app files: tap Download anyway. Your phone may then ask you to allow installs from your browser.";
+        note.hidden = false;
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>

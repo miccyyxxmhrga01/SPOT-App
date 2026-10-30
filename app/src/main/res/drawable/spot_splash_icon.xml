@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The splash icon (Theme.SPOTApp.Starting): SPOT's medallion as the opening screen draws it (SpotLogoMedallion),
+     so the splash hands over without a change of logo. Android shows a 288dp icon within a 192dp circle; the medallion
+     is 160dp across, with the full-resolution logo in the middle. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:width="288dp" android:height="288dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+        </shape>
+    </item>
+    <item android:left="64dp" android:top="64dp" android:right="64dp" android:bottom="64dp">
+        <shape android:shape="oval">
+            <solid android:color="@color/spot_splash_icon_face" />
+            <stroke android:width="8dp" android:color="@color/spot_splash_rim" />
+        </shape>
+    </item>
+    <item android:left="91dp" android:top="91dp" android:right="91dp" android:bottom="91dp"
+        android:drawable="@drawable/spotlogo" />
+</layer-list>

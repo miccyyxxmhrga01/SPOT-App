@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">SPOT</string>
+
+    <!-- Google "Web application" OAuth client; also set as the Google provider's client ID in Supabase Auth. -->
+    <string name="default_web_client_id" translatable="false">751306159309-l3575ukab39sh4g40vtttp7ihf86bb63.apps.googleusercontent.com</string>
+
+</resources>

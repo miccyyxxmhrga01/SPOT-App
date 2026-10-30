@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- SpotPalette.Page in dark mode, behind the system splash. -->
+    <color name="spot_splash_page">#FF121110</color>
+    <!-- SpotPalette.Surface in dark mode: the splash medallion's face. -->
+    <color name="spot_splash_icon_face">#FF232220</color>
+</resources>

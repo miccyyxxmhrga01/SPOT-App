@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="spot_gold">#FFAD8420</color>
+    <!-- SpotPalette.Page in dark mode. -->
+    <color name="spot_dark_page">#FF121110</color>
+    <!-- The system splash's page: SpotPalette.Page, so the splash fades into SPOT's opening screen without a flash. Dark in values-night. -->
+    <color name="spot_splash_page">#FFF8F8F8</color>
+    <!-- The splash icon is SPOT's medallion (drawable/spot_splash_icon): its face is SpotPalette.Surface, its rim gold. -->
+    <color name="spot_splash_icon_face">#FFFFFFFF</color>
+    <color name="spot_splash_rim">#FFD4AF37</color>
+</resources>

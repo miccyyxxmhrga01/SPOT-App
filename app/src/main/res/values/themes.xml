@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.SPOTApp" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/white</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!-- Follows the phone's light or dark mode (spot_splash_page) and shows SPOT's medallion, so it fades into the
+         opening screen (MainActivity's SpotOpeningScreen) with no flash or change of logo. -->
+    <style name="Theme.SPOTApp.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/spot_splash_page</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/spot_splash_icon</item>
+        <item name="windowSplashScreenAnimationDuration">200</item>
+        <item name="postSplashScreenTheme">@style/Theme.SPOTApp</item>
+    </style>
+
+</resources>

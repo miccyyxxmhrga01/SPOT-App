@@ -1,0 +1,47 @@
+# Built artifacts & binaries
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+*.zip
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Gradle & Build outputs
+.gradle/
+build/
+**/build/
+/captures
+
+# Kotlin & Tooling Caches
+.kotlin/
+.claude/
+
+# IDE & Editor files
+.idea/
+*.iml
+.navigation/
+
+# Environment files & secrets
+.env
+.env.*
+*.env
+local.properties
+*.keystore
+*.jks
+*.pepk
+# google-services.json # Uncomment if uploading to a PUBLIC repo to hide Firebase config
+
+# Firebase CLI & Node dependencies
+.firebase/
+node_modules/
+functions/node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
